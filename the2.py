@@ -4,7 +4,7 @@ import os
 # P = 2M, Q = 2N
 
 
-def _filter(shape, r, n, f):
+def _filter(shape, f, r, n):
     if len(shape) == 2:
         P, Q = shape[0], shape[1]
     else:
@@ -13,7 +13,26 @@ def _filter(shape, r, n, f):
     x, y = np.meshgrid(np.arange(Q), np.arange(P))
     dist2 = (x-Q/2)**2 + (y-P/2)**2
     return f(dist2, r**2, n)
+
+# cross Jesus Christ
+
+
+def Jesus(shape, r_h, r_v):
+    if len(shape) == 2:
+        P, Q = shape[0], shape[1]
+    else:
+        P, Q = shape[1], shape[2]
+
+    x, y = np.meshgrid(np.arange(Q), np.arange(P))
+    Q2 = Q/2
+    P2 = P/2
+    return ((x < Q2-r_v) + (x > Q2+r_v)) * ((y < P2-r_h) + (y > P2+r_h))
+
+# laplacian
+# def laplace(dist2, pi2, __): return 4*pi2 * dist2
 # lo-pass
+
+
 def ILPF(dist2, r2, _): return dist2 < r2
 def BLPF(dist2, r2, n): return 1/(1+(dist2/r2)**n)
 def GLPF(dist2, r2, _): return np.e**-(dist2/(2*r2))
@@ -21,11 +40,67 @@ def GLPF(dist2, r2, _): return np.e**-(dist2/(2*r2))
 def IHPF(dist2, r2, _): return dist2 > r2
 def BHPF(dist2, r2, n): return 1/(1+(r2/dist2)**n)
 def GHPF(dist2, r2, _): return 1-np.e**-(dist2/(2*r2))
+# # band-pass
+# def ILPF(dist2, r2_min, r2_max, _): return dist2 > r2_min and dist2 < r2_max
+# def BLPF(dist2, r2_min, r2_max, n): return 1/(1+(dist2/r2)**n)
+# def GLPF(dist2, r2_min, r2_max, _): return np.e**-(dist2/(2*r2))
+# # band-reject
 
 
-def part1(input_img_path, output_path):
+def FT_img(input_path, output_path):
+    f = cv2.imread(input_path)
 
-    f = cv2.imread(input_img_path)
+    M, N = f.shape[0], f.shape[1]
+    P, Q = 2*M, 2*N
+    phi_P, phi_Q = phi(P), phi(Q)
+
+    outbase = os.path.basename(output_path)
+    tmp = outbase.split(".")
+    output_path_base_noext = tmp[0]
+    output_path_base_ext = ".".join(tmp[1:])
+
+    F = FT(f, phi_P, phi_Q)
+
+    F2 = (F.real**2 + F.imag**2)**.5
+
+    B = F2[0, :, :]
+    G = F2[1, :, :]
+    R = F2[2, :, :]
+
+    dir_r = output_path_base_noext + "_r." + output_path_base_ext
+    dir_g = output_path_base_noext + "_g." + output_path_base_ext
+    dir_b = output_path_base_noext + "_b." + output_path_base_ext
+
+    outdir = os.path.dirname(output_path)
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+
+    cv2.imwrite(os.path.join(outdir, dir_r), R)
+    cv2.imwrite(os.path.join(outdir, dir_g), G)
+    cv2.imwrite(os.path.join(outdir, dir_b), B)
+    return F
+
+
+def createDenoiseImg(input_path):
+    inpImg = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+    outbase = os.path.basename(input_path)
+    tmp = outbase.split(".")
+    output_path_base_noext = tmp[0]
+    output_path_base_ext = ".".join(tmp[1:])
+
+    dir_denoiseImg = output_path_base_noext + "_denoise." + output_path_base_ext
+
+    denoiseImg = Jesus(inpImg.shape, 10, 10)
+    denoiseImg = np.where(denoiseImg, 255, 0)
+
+    outdir = os.path.dirname(input_path)
+
+    cv2.imwrite(os.path.join(outdir, dir_denoiseImg), denoiseImg)
+
+
+def medianSpectrum(input_path, output_path):
+    f = cv2.imread(input_path)
+
     M, N = f.shape[0], f.shape[1]
     P, Q = 2*M, 2*N
     phi_P, phi_Q = phi(P), phi(Q)
@@ -33,7 +108,41 @@ def part1(input_img_path, output_path):
 
     F = FT(f, phi_P, phi_Q)
 
-    H = _filter(F.shape, 300, 2, IHPF)
+    medF = cv2.medianBlur(F.real, 5) + cv2.medianBlur(F.imag, 5)*1j
+    mask = (F - medF) > 10
+    F[mask] = 0
+
+    f_processed = invFT(F, inv_phi_P, inv_phi_Q)
+    cv2.imwrite(output_path, f_processed)
+
+
+def denoiseImg(input_path, denoiseImgr, denoiseImgg, denoiseImgb, FToutput_path, output_path):
+
+    F = FT_img(input_path, FToutput_path)
+
+    _denoiseImg = np.stack((denoiseImgb, denoiseImgg, denoiseImgr))
+
+    denoisedImg = F*_denoiseImg
+
+    P, Q = denoisedImg.shape[1], denoisedImg.shape[2]
+    inv_phi_P, inv_phi_Q = phi(P).conj(), phi(Q).conj()
+    f_processed = invFT(denoisedImg, inv_phi_P, inv_phi_Q)
+
+    cv2.imwrite(output_path, f_processed)
+
+
+def part1(input_img_path, output_path):
+
+    f = cv2.imread(input_img_path, cv2.IMREAD_GRAYSCALE)
+    # f = cv2.imread(input_img_path)
+    M, N = f.shape[0], f.shape[1]
+    P, Q = 2*M, 2*N
+    phi_P, phi_Q = phi(P), phi(Q)
+    inv_phi_P, inv_phi_Q = phi_P.conj(), phi_Q.conj()
+
+    F = FT(f, phi_P, phi_Q)
+
+    H = _filter(F.shape, GHPF, 100, 2)
 
     G = F*H
 
@@ -41,6 +150,9 @@ def part1(input_img_path, output_path):
     outdir = os.path.dirname(output_path)
     if not os.path.exists(outdir):
         os.makedirs(outdir)
+
+    f_processed = np.where(f_processed < 0, 0, f_processed)
+    f_processed = np.where(f_processed > 255, 255, f_processed)
 
     cv2.imwrite(output_path, f_processed)
     return f_processed
