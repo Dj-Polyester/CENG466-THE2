@@ -4,7 +4,7 @@ import os
 # P = 2M, Q = 2N
 
 
-def _filter(shape, f, r, n):
+def filterfunc(shape, f, r, n):
     if len(shape) == 2:
         P, Q = shape[0], shape[1]
     else:
@@ -13,21 +13,55 @@ def _filter(shape, f, r, n):
     x, y = np.meshgrid(np.arange(Q), np.arange(P))
     dist2 = (x-Q/2)**2 + (y-P/2)**2
     return f(dist2, r**2, n)
+# slope
 
-# cross Jesus Christ
 
-
-def Jesus(shape, r_h, r_v):
+def bslope(shape, angle, r, n):
     if len(shape) == 2:
         P, Q = shape[0], shape[1]
     else:
         P, Q = shape[1], shape[2]
 
     x, y = np.meshgrid(np.arange(Q), np.arange(P))
+
+    m = np.tan(angle)
+
     Q2 = Q/2
     P2 = P/2
-    return ((x < Q2-r_v) + (x > Q2+r_v)) * ((y < P2-r_h) + (y > P2+r_h))
+    dist2 = (-m*x+y+m*Q2-P2)**2/(m**2+1)
+    return 1/(1+(dist2/(r**2))**n)
 
+
+def gslope(shape, angle, r):
+    if len(shape) == 2:
+        P, Q = shape[0], shape[1]
+    else:
+        P, Q = shape[1], shape[2]
+
+    x, y = np.meshgrid(np.arange(Q), np.arange(P))
+
+    m = np.tan(angle)
+
+    Q2 = Q/2
+    P2 = P/2
+    dist2 = (-m*x+y+m*Q2-P2)**2/(m**2+1)
+    return np.e**-(dist2/(2*(r**2)))
+
+
+def slope(shape, angle, r):
+    if len(shape) == 2:
+        P, Q = shape[0], shape[1]
+    else:
+        P, Q = shape[1], shape[2]
+
+    x, y = np.meshgrid(np.arange(Q), np.arange(P))
+
+    m = np.tan(angle)
+
+    Q2 = Q/2
+    P2 = P/2
+    dist2 = (-m*x+y+m*Q2-P2)**2/(m**2+1)
+    return dist2 < r**2
 # laplacian
 # def laplace(dist2, pi2, __): return 4*pi2 * dist2
 # lo-pass
@@ -81,21 +115,53 @@ def FT_img(input_path, output_path):
     return F
 
 
-def createDenoiseImg(input_path):
-    inpImg = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-    outbase = os.path.basename(input_path)
-    tmp = outbase.split(".")
-    output_path_base_noext = tmp[0]
-    output_path_base_ext = ".".join(tmp[1:])
+def star(shape, r,):
+    return \
+        slope(shape, 0, r) +\
+        slope(shape, np.pi/8, r) +\
+        slope(shape, np.pi/4, r) +\
+        slope(shape, 3*np.pi/8, r) +\
+        slope(shape, np.pi/2, r) +\
+        slope(shape, 5*np.pi/8, r) +\
+        slope(shape, 3*np.pi/4, r) +\
+        slope(shape, 7*np.pi/8, r)
 
-    dir_denoiseImg = output_path_base_noext + "_denoise." + output_path_base_ext
 
-    denoiseImg = Jesus(inpImg.shape, 10, 10)
-    denoiseImg = np.where(denoiseImg, 255, 0)
+def bstar(shape, r, n):
+    return np.maximum.reduce([
+        bslope(shape, 0, r, n),
+        bslope(shape, np.pi/8, r, n),
+        bslope(shape, np.pi/4, r, n),
+        bslope(shape, 3*np.pi/8, r, n),
+        bslope(shape, np.pi/2, r, n),
+        bslope(shape, 5*np.pi/8, r, n),
+        bslope(shape, 3*np.pi/4, r, n),
+        bslope(shape, 7*np.pi/8, r, n)
+    ])
 
-    outdir = os.path.dirname(input_path)
 
-    cv2.imwrite(os.path.join(outdir, dir_denoiseImg), denoiseImg)
+def gstar(shape, r):
+    return np.maximum.reduce([
+        gslope(shape, 0, r),
+        gslope(shape, np.pi/8, r),
+        gslope(shape, np.pi/4, r),
+        gslope(shape, 3*np.pi/8, r),
+        gslope(shape, np.pi/2, r),
+        gslope(shape, 5*np.pi/8, r),
+        gslope(shape, 3*np.pi/4, r),
+        gslope(shape, 7*np.pi/8, r)
+    ])
+
+
+def createDenoiseImg(denoiseImg, output_path):
+    denoiseImg = denoiseImg.astype(float)
+
+    denoiseImg -= np.min(denoiseImg)
+    denoiseImg *= (255/np.max(denoiseImg))
+    outdir = os.path.dirname(output_path)
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+    cv2.imwrite(output_path, denoiseImg)
 
 
 def medianSpectrum(input_path, output_path):
@@ -116,19 +182,24 @@ def medianSpectrum(input_path, output_path):
     cv2.imwrite(output_path, f_processed)
 
 
-def denoiseImg(input_path, denoiseImgr, denoiseImgg, denoiseImgb, FToutput_path, output_path):
+def denoiseImg(f,
+               #    denoiseImgr, denoiseImgg, denoiseImgb,
+               _denoiseImg, output_path):
 
-    F = FT_img(input_path, FToutput_path)
+    M, N = f.shape[0], f.shape[1]
+    P, Q = 2*M, 2*N
+    phi_P, phi_Q = phi(P), phi(Q)
+    inv_phi_P, inv_phi_Q = phi_P.conj(), phi_Q.conj()
 
-    _denoiseImg = np.stack((denoiseImgb, denoiseImgg, denoiseImgr))
+    F = FT(f, phi_P, phi_Q)
 
     denoisedImg = F*_denoiseImg
 
     P, Q = denoisedImg.shape[1], denoisedImg.shape[2]
-    inv_phi_P, inv_phi_Q = phi(P).conj(), phi(Q).conj()
-    f_processed = invFT(denoisedImg, inv_phi_P, inv_phi_Q)
 
+    f_processed = invFT(denoisedImg, inv_phi_P, inv_phi_Q)
     cv2.imwrite(output_path, f_processed)
+    return f_processed
 
 
 def part1(input_img_path, output_path):
@@ -142,7 +213,7 @@ def part1(input_img_path, output_path):
 
     F = FT(f, phi_P, phi_Q)
 
-    H = _filter(F.shape, GHPF, 100, 2)
+    H = filterfunc(F.shape, GHPF, 100, 2)
 
     G = F*H
 
@@ -229,13 +300,47 @@ def invFT(F: np.array, inv_phi_P, inv_phi_Q):
 
 
 def enhance_3(path_to_3, output_path):
-    img = cv2.imread(path_to_3)
-    return img
+    enhanced_img = denoiseImg(path_to_3, star((3036, 3000), 20),
+                              "FT-Outputs/3.png")
+
+    enhanced_img = np.uint8(enhanced_img)
+
+    for _ in range(3):
+        enhanced_img = cv2.medianBlur(enhanced_img, 5)
+        enhanced_img = cv2.fastNlMeansDenoisingColored(
+            enhanced_img, None, 10, 10, 7, 21)
+
+    if output_path[-1] == "/":
+        output_path.pop()
+
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    cv2.imwrite(output_path+"/enhanced.png", enhanced_img)
+    return enhanced_img
 
 
 def enhance_4(path_to_4, output_path):
-    img = cv2.imread(path_to_4)
-    return img
+    enhanced_img = cv2.imread(path_to_4)
+    enhanced_img = cv2.medianBlur(enhanced_img, 5)
+    enhanced_img = cv2.fastNlMeansDenoisingColored(
+        enhanced_img, None, 10, 10, 7, 21)
+
+    enhanced_img = cv2.filter2D(enhanced_img, -1,
+                                np.array([
+                                    [-1, -1, -1],
+                                    [-1, 9, -1],
+                                    [-1, -1, -1]]
+                                ))
+
+    if output_path[-1] == "/":
+        output_path.pop()
+
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    cv2.imwrite(output_path+"/enhanced.png", enhanced_img)
+    return enhanced_img
 
 
 def the2_write(input_img_path, output_path):
